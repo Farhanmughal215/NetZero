@@ -4,7 +4,8 @@ import {
   BarChart2, 
   HardDrive, 
   TrendingUp, 
-  Database, 
+  Database,
+  Map,
   Leaf,
   ChevronLeft,
   ChevronRight
@@ -25,6 +26,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isCollapsed, toggleSidebar }) => {
     { name: 'Supply', icon: <BarChart2 size={20} />, path: '/supply' },
     { name: 'Retirement Trends', icon: <TrendingUp size={20} />, path: '/retirement-trends' },
     { name: 'Token Details', icon: <Database size={20} />, path: '/token-details' },
+    { name: 'AWD Credits Map', icon: <Map size={20} />, path: '/awd-credits-map' },
   ];
 
   return (

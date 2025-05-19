@@ -6,6 +6,7 @@ import OffVsOnChain from './pages/OffVsOnChain';
 import Supply from './pages/Supply';
 import RetirementTrends from './pages/RetirementTrends';
 import TokenDetails from './pages/TokenDetails';
+import AWDCreditsMap from './pages/AWDCreditsMap';
 
 function App() {
   return (
@@ -17,6 +18,7 @@ function App() {
           <Route path="/supply" element={<Supply />} />
           <Route path="/retirement-trends" element={<RetirementTrends />} />
           <Route path="/token-details" element={<TokenDetails />} />
+          <Route path="/awd-credits-map" element={<AWDCreditsMap />} />
         </Routes>
       </Layout>
     </Router>
