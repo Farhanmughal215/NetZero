@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { HelpCircle, Download, RefreshCw, Calendar, Filter } from 'lucide-react';
+import { HelpCircle, Download, RefreshCw, Calendar, Filter, ChevronDown, Map } from 'lucide-react';
 import { TooltipProvider, TooltipRoot, TooltipTrigger, TooltipContent } from '../components/ui/Tooltip';
 import * as d3 from 'd3';
 import { geoPath } from 'd3-geo';
 import { vietnamGeoData } from '../data/vietnamGeoData';
 import { vietnamMapData } from '../data/vietnamMapData';
+import LineChart from '../components/charts/LineChart';
 
 interface Province {
   id: string;
@@ -31,6 +32,11 @@ const AWDCreditsMap: React.FC = () => {
     endDate: '2025-12-31'
   });
 
+  const provinces = vietnamGeoData.features.map(feature => ({
+    id: feature.properties.name.toLowerCase().replace(/\s+/g, '-'),
+    name: feature.properties.name
+  }));
+
   const mockStats = {
     totalCredits: '3,271,233',
     verifiedProjects: 156,
@@ -42,12 +48,119 @@ const AWDCreditsMap: React.FC = () => {
     ]
   };
 
+  const totalCreditsPerYear = React.useMemo(() => {
+    const years = ['2019', '2020', '2021', '2022', '2023'];
+    return years.map(year => ({
+      date: year,
+      value: vietnamGeoData.features.reduce((sum, province) => {
+        return sum + (province.properties.historicalData[year]?.credits || 0);
+      }, 0) / 1000
+    }));
+  }, []);
+
+  const getTrendData = (provinceName: string | null) => {
+    if (!provinceName) {
+      return totalCreditsPerYear.map(d => ({
+        date: d.date,
+        'Total Credits': d.value
+      }));
+    }
+
+    const province = vietnamGeoData.features.find(
+      f => f.properties.name === provinceName
+    );
+
+    if (!province) return [];
+
+    return Object.entries(province.properties.historicalData)
+      .map(([year, data]) => ({
+        date: year,
+        [provinceName]: (data.credits || 0) / 1000
+      }))
+      .sort((a, b) => Number(a.date) - Number(b.date));
+  };
+
   const getColorForCredits = (credits: number) => {
     if (credits > 500000) return '#2E7D32';
     if (credits > 400000) return '#388E3C';
     if (credits > 300000) return '#43A047';
     if (credits > 200000) return '#4CAF50';
     return '#66BB6A';
+  };
+
+  const zoomToProvince = (coordinates: [number, number]) => {
+    if (!mapRef.current) return;
+
+    const svg = d3.select(mapRef.current);
+    const width = 800;
+    const height = 800;
+
+    const projection = d3.geoMercator()
+      .center([106.5, 16])
+      .scale(2200)
+      .translate([width / 2, height / 2]);
+
+    const x = projection(coordinates)[0];
+    const y = projection(coordinates)[1];
+    const scale = 4;
+
+    const transform = d3.zoomIdentity
+      .translate(width / 2, height / 2)
+      .scale(scale)
+      .translate(-x, -y);
+
+    svg.transition()
+      .duration(750)
+      .call(
+        (d3.zoom() as any).transform,
+        transform
+      );
+  };
+
+  const handleProvinceSelect = (provinceId: string) => {
+    const selectedFeature = vietnamGeoData.features.find(
+      feature => feature.properties.name.toLowerCase().replace(/\s+/g, '-') === provinceId
+    );
+
+    if (selectedFeature) {
+      setSelectedProvince({
+        id: provinceId,
+        name: selectedFeature.properties.name,
+        projects: selectedFeature.properties.historicalData[year]?.projects || 0,
+        credits: selectedFeature.properties.historicalData[year]?.credits || 0,
+        lastVerification: selectedFeature.properties.lastVerification || 'N/A',
+        awdPercentage: selectedFeature.properties.historicalData[year]?.awdPercentage || 0,
+        coordinates: selectedFeature.geometry.coordinates
+      });
+
+      if (mapRef.current) {
+        const svg = d3.select(mapRef.current);
+        svg.selectAll('circle')
+          .attr('fill', (d: any) => {
+            if (d.properties.name === selectedFeature.properties.name) {
+              return '#49E1C3';
+            }
+            const yearData = d.properties.historicalData?.[year];
+            return getColorForCredits(yearData?.credits || 0);
+          });
+
+        zoomToProvince(selectedFeature.geometry.coordinates);
+      }
+    } else {
+      setSelectedProvince(null);
+      
+      if (mapRef.current) {
+        const svg = d3.select(mapRef.current);
+        svg.transition()
+          .duration(750)
+          .call(
+            (d3.zoom() as any).transform,
+            d3.zoomIdentity
+          );
+      }
+    }
+
+    setFilters({ ...filters, province: provinceId });
   };
 
   const updateMapData = (selectedYear: number) => {
@@ -114,8 +227,8 @@ const AWDCreditsMap: React.FC = () => {
 
     const svg = d3.select(mapRef.current);
     const width = 800;
-    const height = 600;
-    const margin = { top: 20, right: 20, bottom: 20, left: 20 };
+    const height = 800;
+    const margin = { top: 40, right: 40, bottom: 40, left: 40 };
 
     svg.selectAll('*').remove();
 
@@ -123,7 +236,7 @@ const AWDCreditsMap: React.FC = () => {
       .attr('width', width)
       .attr('height', height)
       .attr('viewBox', [0, 0, width, height].join(' '))
-      .attr('style', 'max-width: 100%; height: auto; background: linear-gradient(to bottom right, #f0f9ff, #e0f2fe);');
+      .attr('style', 'max-width: 100%; height: auto; background: #eef2f7;');
 
     const g = svg.append('g');
 
@@ -133,124 +246,114 @@ const AWDCreditsMap: React.FC = () => {
         g.attr('transform', event.transform);
       });
 
-    svg.call(zoom as any)
-      .call(zoom.transform as any, d3.zoomIdentity);
+    svg.call(zoom as any);
 
     const projection = d3.geoMercator()
       .center([106.5, 16])
-      .scale(2000)
+      .scale(2200)
       .translate([width / 2, height / 2]);
 
     const path = geoPath().projection(projection);
 
-    g.selectAll('path.province')
-      .data(vietnamMapData.features)
+    g.selectAll('path.country')
+      .data(vietnamMapData.features.filter(f => f.properties.region === 'country'))
       .join('path')
-      .attr('class', 'province')
+      .attr('class', 'country')
       .attr('d', path as any)
-      .attr('fill', '#f3f4f6')
-      .attr('stroke', '#d1d5db')
-      .attr('stroke-width', 0.5)
-      .attr('opacity', 0.8);
+      .attr('fill', '#ffffff')
+      .attr('stroke', '#e2e8f0')
+      .attr('stroke-width', 1.5)
+      .attr('stroke-opacity', 0.8);
 
-    const credits = vietnamGeoData.features.map(f => f.properties.historicalData[year]?.credits || 0);
-    const maxCredits = Math.max(...credits);
-    const minCredits = Math.min(...credits);
-    
-    const radiusScale = d3.scaleLinear()
-      .domain([minCredits, maxCredits])
-      .range([20, 35]);
+    const markerGroup = g.append('g').attr('class', 'markers');
 
-    g.selectAll('circle')
-      .data(vietnamGeoData.features)
-      .join('circle')
-      .attr('cx', d => projection(d.geometry.coordinates)![0])
-      .attr('cy', d => projection(d.geometry.coordinates)![1])
-      .attr('r', d => radiusScale(d.properties.historicalData[year]?.credits || 0))
-      .attr('fill', d => d.properties.color)
-      .attr('stroke', '#fff')
-      .attr('stroke-width', 2)
-      .attr('opacity', 0.85)
-      .attr('cursor', 'pointer')
-      .style('filter', 'drop-shadow(0 2px 4px rgba(0,0,0,0.1))')
-      .on('mouseover', function(event, d) {
-        this.parentNode.appendChild(this);
-        
-        d3.select(this)
-          .transition()
-          .duration(200)
-          .attr('opacity', 1)
-          .attr('r', d => radiusScale(d.properties.historicalData[year]?.credits || 0) * 1.2)
-          .style('filter', 'drop-shadow(0 4px 8px rgba(0,0,0,0.2))');
+    const defs = svg.append('defs');
+    const filter = defs.append('filter')
+      .attr('id', 'marker-shadow')
+      .attr('x', '-50%')
+      .attr('y', '-50%')
+      .attr('width', '200%')
+      .attr('height', '200%');
 
-        const [x, y] = projection(d.geometry.coordinates)!;
-        
-        const tooltip = g.append('g')
-          .attr('class', 'tooltip')
-          .attr('transform', `translate(${x},${y - 70})`);
+    filter.append('feDropShadow')
+      .attr('dx', 0)
+      .attr('dy', 2)
+      .attr('stdDeviation', 2)
+      .attr('flood-color', '#000')
+      .attr('flood-opacity', 0.15);
 
-        tooltip.append('rect')
-          .attr('x', -100)
-          .attr('y', -45)
-          .attr('width', 200)
-          .attr('height', 40)
-          .attr('fill', 'rgba(17, 24, 39, 0.95)')
-          .attr('rx', 8)
-          .style('filter', 'drop-shadow(0 4px 6px rgba(0,0,0,0.1))');
+    vietnamGeoData.features.forEach(feature => {
+      const [x, y] = projection(feature.geometry.coordinates)!;
+      const credits = feature.properties.historicalData[year]?.credits || 0;
+      
+      const markerGroup = g.append('g')
+        .attr('transform', `translate(${x},${y})`)
+        .attr('cursor', 'pointer')
+        .style('filter', 'url(#marker-shadow)')
+        .on('mouseover', function(event) {
+          d3.select(this)
+            .transition()
+            .duration(200)
+            .attr('transform', `translate(${x},${y}) scale(1.1)`);
+            
+          const tooltip = g.append('g')
+            .attr('class', 'tooltip')
+            .attr('transform', `translate(${x},${y - 60})`);
 
-        tooltip.append('text')
-          .attr('x', 0)
-          .attr('y', -25)
-          .attr('text-anchor', 'middle')
-          .attr('fill', '#fff')
-          .style('font-size', '14px')
-          .style('font-weight', '600')
-          .text(d.properties.name);
+          tooltip.append('rect')
+            .attr('x', -100)
+            .attr('y', -40)
+            .attr('width', 200)
+            .attr('height', 50)
+            .attr('rx', 8)
+            .attr('fill', 'white')
+            .attr('stroke', '#e2e8f0')
+            .style('filter', 'url(#marker-shadow)');
 
-        tooltip.append('text')
-          .attr('x', 0)
-          .attr('y', -8)
-          .attr('text-anchor', 'middle')
-          .attr('fill', '#9CA3AF')
-          .style('font-size', '12px')
-          .text(`${(d.properties.historicalData[year]?.credits || 0).toLocaleString()} tCO₂`);
-      })
-      .on('mouseout', function() {
-        d3.select(this)
-          .transition()
-          .duration(200)
-          .attr('opacity', 0.85)
-          .attr('r', d => radiusScale(d.properties.historicalData[year]?.credits || 0))
-          .style('filter', 'drop-shadow(0 2px 4px rgba(0,0,0,0.1))');
+          tooltip.append('text')
+            .attr('x', 0)
+            .attr('y', -20)
+            .attr('text-anchor', 'middle')
+            .attr('fill', '#1a202c')
+            .style('font-weight', '600')
+            .style('font-size', '14px')
+            .text(feature.properties.name);
 
-        g.selectAll('.tooltip').remove();
-      })
-      .on('click', (event, d) => {
-        setSelectedProvince({
-          id: d.properties.name.toLowerCase().replace(/\s+/g, '-'),
-          name: d.properties.name,
-          projects: d.properties.historicalData[year]?.projects || 0,
-          credits: d.properties.historicalData[year]?.credits || 0,
-          lastVerification: d.properties.lastVerification || 'N/A',
-          awdPercentage: d.properties.historicalData[year]?.awdPercentage || 0,
-          coordinates: d.geometry.coordinates
+          tooltip.append('text')
+            .attr('x', 0)
+            .attr('y', 0)
+            .attr('text-anchor', 'middle')
+            .attr('fill', '#4a5568')
+            .style('font-size', '12px')
+            .text(`${credits.toLocaleString()} tCO₂`);
+        })
+        .on('mouseout', function() {
+          d3.select(this)
+            .transition()
+            .duration(200)
+            .attr('transform', `translate(${x},${y})`);
+          g.selectAll('.tooltip').remove();
+        })
+        .on('click', () => {
+          const provinceId = feature.properties.name.toLowerCase().replace(/\s+/g, '-');
+          handleProvinceSelect(provinceId);
         });
-      });
 
-    g.selectAll('text')
-      .data(vietnamGeoData.features)
-      .join('text')
-      .attr('x', d => projection(d.geometry.coordinates)![0])
-      .attr('y', d => {
-        const radius = radiusScale(d.properties.historicalData[year]?.credits || 0);
-        return projection(d.geometry.coordinates)![1] + radius + 15;
-      })
-      .attr('text-anchor', 'middle')
-      .attr('fill', '#1f2937')
-      .attr('font-size', '12px')
-      .attr('font-weight', '600')
-      .style('text-shadow', '1px 1px 2px rgba(255,255,255,0.9), -1px -1px 2px rgba(255,255,255,0.9)')
-      .text(d => d.properties.name);
+      markerGroup.append('path')
+        .attr('d', 'M0-20c-4.4 0-8 3.6-8 8 0 5.2 8 13 8 13s8-7.8 8-13c0-4.4-3.6-8-8-8z')
+        .attr('fill', feature.properties.color)
+        .attr('stroke', 'white')
+        .attr('stroke-width', 2);
+
+      markerGroup.append('text')
+        .attr('y', 30)
+        .attr('text-anchor', 'middle')
+        .attr('fill', '#1a202c')
+        .style('font-size', '12px')
+        .style('font-weight', '500')
+        .style('text-shadow', '1px 1px 2px white, -1px -1px 2px white')
+        .text(feature.properties.name);
+    });
 
     const legendData = [
       { color: '#2E7D32', label: '> 500,000 tCO₂' },
@@ -268,35 +371,32 @@ const AWDCreditsMap: React.FC = () => {
       .attr('y', -10)
       .attr('width', 150)
       .attr('height', 140)
-      .attr('fill', 'rgba(255,255,255,0.9)')
+      .attr('fill', 'white')
       .attr('rx', 8)
-      .style('filter', 'drop-shadow(0 2px 4px rgba(0,0,0,0.1))');
+      .style('filter', 'url(#marker-shadow)');
 
-    legend.selectAll('rect.item')
-      .data(legendData)
-      .join('rect')
-      .attr('class', 'item')
-      .attr('x', 5)
-      .attr('y', (d, i) => i * 25 + 5)
-      .attr('width', 15)
-      .attr('height', 15)
-      .attr('fill', d => d.color)
-      .attr('rx', 3)
-      .style('filter', 'drop-shadow(0 1px 2px rgba(0,0,0,0.1))');
+    legendData.forEach((d, i) => {
+      const legendItem = legend.append('g')
+        .attr('transform', `translate(5, ${i * 25 + 5})`);
 
-    legend.selectAll('text')
-      .data(legendData)
-      .join('text')
-      .attr('x', 30)
-      .attr('y', (d, i) => i * 25 + 17)
-      .attr('font-size', '12px')
-      .attr('fill', '#4b5563')
-      .text(d => d.label);
+      legendItem.append('path')
+        .attr('d', 'M0,0 c-2,0-3.6,1.6-3.6,3.6 0,2.3 3.6,5.9 3.6,5.9s3.6-3.5,3.6-5.9c0-2-1.6-3.6-3.6-3.6z')
+        .attr('fill', d.color)
+        .attr('stroke', 'white')
+        .attr('stroke-width', 1);
+
+      legendItem.append('text')
+        .attr('x', 25)
+        .attr('y', 7)
+        .attr('font-size', '12px')
+        .attr('fill', '#4b5563')
+        .text(d.label);
+    });
 
     return () => {
       svg.selectAll('*').remove();
     };
-  }, [year]);
+  }, [year, selectedProvince]);
 
   return (
     <TooltipProvider>
@@ -333,6 +433,88 @@ const AWDCreditsMap: React.FC = () => {
                   Export CSV
                 </button>
               </div>
+            </div>
+          </div>
+
+          {/* Updated Province Selection Section */}
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+            <div className="p-6">
+              <div className="flex flex-col md:flex-row items-start gap-6">
+                <div className="w-full md:w-1/2">
+                  <label className="block text-xl font-bold text-gray-900 mb-3">
+                    Select Province
+                  </label>
+                  <div className="relative">
+                    <select
+                      className="w-full h-14 pl-5 pr-12 text-lg bg-white border-2 border-primary rounded-xl shadow-sm 
+                               focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all
+                               appearance-none cursor-pointer hover:bg-gray-50"
+                      value={filters.province}
+                      onChange={(e) => handleProvinceSelect(e.target.value)}
+                    >
+                      <option value="">All Provinces</option>
+                      {provinces.map((province) => (
+                        <option key={province.id} value={province.id}>
+                          {province.name}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="absolute inset-y-0 right-0 flex items-center pr-4 pointer-events-none">
+                      <ChevronDown size={24} className="text-primary" />
+                    </div>
+                  </div>
+                  <p className="mt-3 text-sm text-gray-600">
+                    Select a province to view detailed carbon credit data and statistics
+                  </p>
+                </div>
+                <div className="w-full md:w-1/2">
+                  <h3 className="text-lg font-semibold text-gray-700 mb-3">Quick Access</h3>
+                  <div className="grid grid-cols-2 gap-3">
+                    {['Hanoi', 'Da Nang', 'Ho Chi Minh City', 'An Giang'].map((city) => (
+                      <button
+                        key={city}
+                        onClick={() => handleProvinceSelect(city.toLowerCase().replace(/\s+/g, '-'))}
+                        className="px-4 py-3 bg-gray-50 hover:bg-gray-100 text-gray-700 rounded-xl text-sm font-medium 
+                                 transition-colors border border-gray-200 hover:border-gray-300 flex items-center justify-center"
+                      >
+                        <Map size={16} className="mr-2 text-primary" />
+                        {city}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Add Trend Graph before Main Content */}
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+            <div className="px-4 py-3 border-b border-gray-200 flex justify-between items-center">
+              <h2 className="font-medium text-gray-700">
+                {selectedProvince ? `${selectedProvince.name} AWD Credits Trend` : 'Total AWD Credits Trend'}
+              </h2>
+              <div className="flex items-center space-x-2">
+                <span className="text-sm text-gray-500">Credits (thousands tCO₂)</span>
+                <TooltipRoot>
+                  <TooltipTrigger asChild>
+                    <button className="text-gray-400 hover:text-gray-600">
+                      <HelpCircle size={16} />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="left">
+                    {selectedProvince 
+                      ? `AWD credits issued in ${selectedProvince.name} per year`
+                      : 'Total AWD credits issued across all provinces per year'
+                    }
+                  </TooltipContent>
+                </TooltipRoot>
+              </div>
+            </div>
+            <div className="p-4 h-64">
+              <LineChart 
+                data={getTrendData(selectedProvince?.name || null)}
+                selectedProvince={selectedProvince?.name || null}
+              />
             </div>
           </div>
 
@@ -390,12 +572,14 @@ const AWDCreditsMap: React.FC = () => {
                     <select
                       className="w-full border-gray-200 rounded-lg shadow-sm focus:ring-primary focus:border-primary"
                       value={filters.province}
-                      onChange={(e) => setFilters({ ...filters, province: e.target.value })}
+                      onChange={(e) => handleProvinceSelect(e.target.value)}
                     >
                       <option value="">All Provinces</option>
-                      <option value="an-giang">An Giang</option>
-                      <option value="dong-thap">Dong Thap</option>
-                      <option value="kien-giang">Kien Giang</option>
+                      {provinces.map((province) => (
+                        <option key={province.id} value={province.id}>
+                          {province.name}
+                        </option>
+                      ))}
                     </select>
                   </div>
                   <div>
@@ -513,6 +697,7 @@ const AWDCreditsMap: React.FC = () => {
                       <span className="text-sm font-medium">{selectedProvince.lastVerification}</span>
                     </div>
                     <div className="flex justify-between">
+                      
                       <span className="text-sm text-gray-500">AWD Coverage</span>
                       <span className="text-sm font-medium">{selectedProvince.awdPercentage}%</span>
                     </div>
